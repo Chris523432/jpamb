@@ -180,9 +180,27 @@ def main():
         "*": check_inf_loop(body),
     }
 
+    divide_or_end = re.search(r"/|(^\s*})", rest, re.MULTILINE)
+
+    if not divide_or_end:
+        log.error("Could not find end of method or divide")
+        log.error(rest)
+        sys.exit(1)
+
+    log.debug(f"found divide {divide_or_end}")
+    divide_found = divide_or_end.group(0) == "/"
+
+    if divide_found:
+        log.debug("Found divide")
+        print("divide by zero;found-div")
+    else:
+        log.debug("No divide")
+        print("divide by zero;not-found-div")
+
     for q in jpamb.QUERIES:
-        category = results.get(q, "skip")
-        print(f"{q};{category}")
+        if q == "divide by zero":
+            continue
+        print(f"{q};{results.get(q, 'skip')}")
 
 if __name__ == "__main__":
     main()
