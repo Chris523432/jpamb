@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jpamb"
-version = "0.4.0"
+version = "0.5.1"
 dependencies = [
   "PyYAML==6.0.*",
   "click==8.1.*",
@@ -23,6 +23,7 @@ classifiers = [
 
 [project.scripts]
 jpamb = "cli:cli"
+jpamb-trivial = "basic:main"
 
 [dependency-groups]
 dev = [
