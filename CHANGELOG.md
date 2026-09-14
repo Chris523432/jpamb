@@ -1,5 +1,13 @@
 # The Change Log
 
+## Version 0.6.0
+
+- Fix bug in `inspect`
+- Create `jpamb interpret` command
+- Mayor refactor of repository
+- Change `arrayContent` to actually look into the content.
+- Add `arrayContentAboveMinus13` to be a harder case
+
 ## Version 0.5.1
 
 - Fix issue with floating point conversion (issue #62).
