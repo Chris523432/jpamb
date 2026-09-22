@@ -5,24 +5,56 @@ import jpamb
 import jvm
 import jvm.state as jvmc
 
-# Done!
-def binary(op, v1: int, v2: int) -> int | str: 
+def to_i32(v: int) -> int:
+    """
+    Java and python have different integer arithmetic.
+    Ints in java are 32-bit signed integers, so what would happen if we
+    add 1 to 2**31 - 1 = 2.147.483.647? 
+    
+    Hint: recall computer systems
+    
+    a) I (Bastian) will show up for every single lecture... FOREVER
+    b) 2.147.483.648
+    c) -2.147.483.648
+    
+    Python does not have this behaviour, so we need to simulate it :)
+    """
+    v = v & 0xFFFFFFFF
+    if v >= 2**31:
+        v = v - 2**32
+    return v
+
+def xor(b1: bool, b2: bool) -> bool:
+    return b1 != b2
+    
+def java_div(v1: int, v2: int) -> int:
+    q = abs(v1) // abs(v2)
+    if xor((v1 < 0), (v2 < 0)):
+        q = -q
+    return q
+
+def java_rem(v1: int, v2: int) -> int:
+    return v1 - java_div(v1, v2) * v2
+
+# Done !
+def binary(op, v1: int, v2: int) -> int | str:
     match op:
-        case jvm.BinaryOpr.Div:
-            try:
-                return v1 // v2
-            except ZeroDivisionError:
-                return "divide by zero"
         case jvm.BinaryOpr.Add:
-            return v1 + v2
+            return to_i32(v1 + v2)
         case jvm.BinaryOpr.Sub:
-            return v1 - v2
+            return to_i32(v1 - v2)
         case jvm.BinaryOpr.Mul:
-            return v1 * v2
+            return to_i32(v1 * v2)
+        case jvm.BinaryOpr.Div:
+            if v2 == 0:
+                return "divide by zero"
+            return to_i32(java_div(v1, v2))
         case jvm.BinaryOpr.Rem:
-            return v1 % v2
+            if v2 == 0:
+                return "divide by zero"
+            return to_i32(java_rem(v1, v2))
         case _:
-            raise AssertionError(f"Unknown binary operator {op!r}, BinaryOpr only has 5 members")
+            raise AssertionError(f"Unknown comparison operator {op!r}, CmpOpr only has 5 members")
 
 # Done!
 def compare(op, v1: int, v2: int) -> bool:
@@ -40,8 +72,7 @@ def compare(op, v1: int, v2: int) -> bool:
         case jvm.CmpOpr.Ge:
             return v1 >= v2
         case _:
-            raise AssertionError(f"Unknown binary operator {op!r}, BinaryOpr only has 5 members")
-
+            raise AssertionError(f"Unknown comparison operator {op!r}, CmpOpr only has 6 members")
 
 def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | str]:
     assert isinstance(state, jvmc.State), f"expected state but got {state}"
