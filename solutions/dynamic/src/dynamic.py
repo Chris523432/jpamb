@@ -45,7 +45,6 @@ def java_div(v1: int, v2: int) -> int:
 def java_rem(v1: int, v2: int) -> int:
     return v1 - java_div(v1, v2) * v2
 
-# Done !
 def binary(op, v1: int, v2: int) -> int | str:
     match op:
         case jvm.BinaryOpr.Add:
@@ -65,7 +64,6 @@ def binary(op, v1: int, v2: int) -> int | str:
         case _:
             raise AssertionError(f"Unknown comparison operator {op!r}, CmpOpr only has 5 members")
 
-# Done!
 def compare(op, v1: int, v2: int) -> bool:
     match op:
         case jvm.CmpOpr.Eq:
