@@ -243,7 +243,7 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
                 if index.value < 0 or index.value >= len(array.values):
                     output = "out of bounds"
                 else:
-                    array.values[index.value] = value.value   # mutates the heap directly
+                    array.values[index.value] = value.value
                     frame.pc += 1
                     
         case jvm.InvokeStatic(method=m):
@@ -254,6 +254,19 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
                 callee.locals[i] = frame.stack.pop()
                 i = i - 1
             state.frames.push(callee)
+            
+        case jvm.Cast(from_=jvm.Int(), to_=t):
+            v = frame.stack.pop()
+            assert isinstance(v, jvmc.StackInt), f"expected int, but got {v}"
+            match t:
+                case jvm.Short():
+                    result = to_i16(v.value)
+                case jvm.Char():
+                    result = to_u16(v.value)
+                case _:
+                    raise NotImplementedError(f"Don't know how to cast int to {t}")
+            frame.stack.push(jvmc.StackInt(result))
+            frame.pc += 1
             
         case jvm.InvokeVirtual(method=m):
             is_string_equals = (
@@ -283,7 +296,7 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
 
                 frame.stack.push(jvmc.StackInt(result))
                 frame.pc += 1
-            
+
         case a:
             raise NotImplementedError(a.help())
 
