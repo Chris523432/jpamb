@@ -5,24 +5,42 @@ import jpamb
 import jvm
 import jvm.state as jvmc
 
-
-def binary(op, v1: int, v2: int) -> int | str:
+# Done!
+def binary(op, v1: int, v2: int) -> int | str: 
     match op:
         case jvm.BinaryOpr.Div:
             try:
                 return v1 // v2
             except ZeroDivisionError:
                 return "divide by zero"
-        case a:
-            raise NotImplementedError(f"Unhandled binary {op!r}")
+        case jvm.BinaryOpr.Add:
+            return v1 + v2
+        case jvm.BinaryOpr.Sub:
+            return v1 - v2
+        case jvm.BinaryOpr.Mul:
+            return v1 * v2
+        case jvm.BinaryOpr.Rem:
+            return v1 % v2
+        case _:
+            raise AssertionError(f"Unknown binary operator {op!r}, BinaryOpr only has 5 members")
 
-
+# Done!
 def compare(op, v1: int, v2: int) -> bool:
     match op:
         case jvm.CmpOpr.Eq:
             return v1 == v2
+        case jvm.CmpOpr.Ne:
+            return v1 != v2
+        case jvm.CmpOpr.Lt:
+            return v1 < v2
+        case jvm.CmpOpr.Le:
+            return v1 <= v2
+        case jvm.CmpOpr.Gt:
+            return v1 > v2
+        case jvm.CmpOpr.Ge:
+            return v1 >= v2
         case _:
-            raise NotImplementedError(f"Unhandled comparation {op!r}")
+            raise AssertionError(f"Unknown binary operator {op!r}, BinaryOpr only has 5 members")
 
 
 def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | str]:
