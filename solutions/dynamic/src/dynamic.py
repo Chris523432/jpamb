@@ -103,13 +103,18 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
                 frame.pc += 1
 
         case jvm.Return(type=t):
-            if t is not None:
-                raise NotImplementedError("Still to be done")
+            if t is None:
+                value = None
+            else:
+                value = frame.stack.pop()
 
             state.frames.pop()
 
             if state.frames:
-                raise NotImplementedError("Still to be done")
+                caller = state.frames.peek()
+                if value is not None:
+                    caller.stack.push(value)
+                caller.pc += 1
             else:
                 output = "ok"
 
@@ -125,6 +130,54 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
             # Hack -- if we create an assertion error, we probably also throw it.
             output = "assertion error"
 
+        case jvm.Load(type=t, index=n):
+            v = frame.locals[n]
+            frame.stack.push(v)
+            frame.pc += 1
+
+        case jvm.Store(type=t, index=n):
+            v = frame.stack.pop()
+            frame.locals[n] = v
+            frame.pc += 1
+
+        case jvm.Dup(words=1):
+            v = frame.stack.pop()
+            frame.stack.push(v)
+            frame.stack.push(v)
+            frame.pc += 1
+
+        case jvm.Incr(index=n, amount=amount):
+            v = frame.locals[n]
+            assert isinstance(v, jvmc.StackInt), f"expected int, but got {v}"
+            frame.locals[n] = jvmc.StackInt(to_i32(v.value + amount))
+            frame.pc += 1
+
+        case jvm.Negate(type=jvm.Int()):
+            v = frame.stack.pop()
+            assert isinstance(v, jvmc.StackInt), f"expected int, but got {v}"
+            frame.stack.push(jvmc.StackInt(to_i32(-v.value)))
+            frame.pc += 1
+
+        case jvm.Goto(target=target):
+            frame.pc %= target
+
+        case jvm.Ifz(condition=op, target=target):
+            v = frame.stack.pop()
+            assert isinstance(v, jvmc.StackInt), f"expected int, but got {v}"
+            if compare(op, v.value, 0):
+                frame.pc %= target
+            else:
+                frame.pc += 1
+
+        case jvm.If(condition=op, target=target):
+            v2 = frame.stack.pop()
+            v1 = frame.stack.pop()
+            assert isinstance(v1, jvmc.StackInt), f"expected int, but got {v1}"
+            assert isinstance(v2, jvmc.StackInt), f"expected int, but got {v2}"
+            if compare(op, v1.value, v2.value):
+                frame.pc %= target
+            else:
+                frame.pc += 1
         case a:
             raise NotImplementedError(a.help())
 
