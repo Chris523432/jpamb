@@ -5,6 +5,7 @@ import jpamb
 import jvm
 import jvm.state as jvmc
 
+
 def to_u16(v: int) -> int: # chars
     return v & 0xFFFF
 
@@ -290,9 +291,8 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
                 result = 0
                 if arg.value != 0:
                     arg_obj = state.heap[arg]
-                    if isinstance(arg_obj, jvmc.HeapString):
-                        if receiver_obj.content == arg_obj.content:
-                            result = 1
+                    if (isinstance(arg_obj, jvmc.HeapString) & receiver_obj.content == arg_obj.content):
+                        result = 1
 
                 frame.stack.push(jvmc.StackInt(result))
                 frame.pc += 1
@@ -341,7 +341,7 @@ def interpret():
     methodid, input, max_steps = jpamb.getcase(
         "dynamic",
         "1.0",
-        "The Rice Theorem Cookers",
+        "MeatballMice",
         ["dynamic", "python"],
         for_science=True,
     )
@@ -384,7 +384,7 @@ def analyse():
     methodid = jpamb.getmethodid(
         "dynamic",
         "1.0",
-        "The Rice Theorem Cookers",
+        "MeatballMice",
         ["dynamic", "python"],
         for_science=True,
     )
