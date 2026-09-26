@@ -291,7 +291,7 @@ def step(bc: jpamb.Bytecode, state: jvmc.State) -> tuple[jvmc.PC, jvmc.State | s
                 result = 0
                 if arg.value != 0:
                     arg_obj = state.heap[arg]
-                    if (isinstance(arg_obj, jvmc.HeapString) & receiver_obj.content == arg_obj.content):
+                    if isinstance(arg_obj, jvmc.HeapString) and receiver_obj.content == arg_obj.content:
                         result = 1
 
                 frame.stack.push(jvmc.StackInt(result))
@@ -377,8 +377,8 @@ def fuzz_input(rand: random.Random, methodid: jvm.AbsMethodID) -> jpamb.case.Inp
 
     return jpamb.case.Input(input)
 
-
 def analyse():
+    from dynamic_helper import select_trace, analyse_traces
     """The dynamic analysis, e.g. in this case a (dumb) fuzzer."""
 
     methodid = jpamb.getmethodid(
@@ -399,23 +399,14 @@ def analyse():
     # Make the randomness deterministic
     rand = random.Random(0)
 
-    behaviors = set()
+    number_of_params = len(methodid.extension.params)
+    traces = []
     # Try 10 random inputs
     for i in range(10):
         input = fuzz_input(rand, methodid)
-        state = initial(bc, methodid, input)
+        trace = select_trace(bc, methodid, input, MAX_STEPS)
+        traces.append(trace)
 
-        for x in range(MAX_STEPS):
-            _, state = step(bc, state)
-            if isinstance(state, str):
-                behaviors.add(state)
-                break
-
+    answers = analyse_traces(traces, number_of_params)
     for query in jpamb.QUERIES:
-        if query in behaviors:
-            if query == "*":
-                print(f"{query};timeout")
-            else:
-                print(f"{query};found")
-        else:
-            print(f"{query};not-found")
+        print(f"{query};{answers[query]}")
