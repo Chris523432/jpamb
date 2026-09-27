@@ -5,12 +5,12 @@ This module provides the basic data model for working with the JPAMB.
 
 """
 
+import copy
 import json
 import subprocess
 import sys
-from collections import Counter, defaultdict
+from collections import Counter, OrderedDict
 from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NoReturn
@@ -20,29 +20,13 @@ import runit
 import jvm
 import jvm.state
 import sexpr
-from jpamb.analyse import (
-    QUERIES as QUERIES,
-)
-from jpamb.analyse import (
-    AnalysisInfo as AnalysisInfo,
-)
-from jpamb.analyse import (
-    Category as Category,
-)
-from jpamb.analyse import (
-    Duration as Duration,
-)
-from jpamb.analyse import (
-    Prediction as Prediction,
-)
-from jpamb.analyse import (
-    Tracker as Tracker,
-)
-from jpamb.analyse import (
-    Wager as Wager,
-)
-from jpamb.case import Case, Input
-from jpamb.utils import DockerRunner, Effect
+from jpamb import interpret
+from jpamb.analyse import QUERIES as QUERIES
+from jpamb.case import Benchmark, Case, Control, Coverage, Experiment, Input
+from jpamb.report import AnalysisInfo as AnalysisInfo
+from jpamb.utils import DockerRunner, Effect, HealthChecker, HealthIssue
+
+__version__ = "0.7.0"
 
 
 @dataclass(frozen=True)
@@ -50,27 +34,13 @@ class Suite:
     """The suite!"""
 
     workdir: Path
-    cases: tuple[Case, ...]
 
     @classmethod
-    def from_workdir(cls, workdir: Path, *, eff: Effect):
-        cases = []
-
-        case_file = workdir / "target" / "stats" / "cases.txt"
-        with (
-            eff.context(f"Reading cases from {case_file}"),
-            open(case_file, encoding="utf-8") as f,
-        ):
-            cases = tuple(Case.decode(line) for line in f)
-
-        return cls(workdir, cases)
+    def from_workdir(cls, workdir: Path):
+        return cls(workdir)
 
     def __post_init__(self):
         assert self.workdir.is_absolute(), f"Assuming that {self.workdir} is absolute."
-        assert self.cases, "Expected cases"
-
-        for case in self.cases:
-            assert isinstance(case, Case), f"Expected Case but got {case!r}"
 
     @property
     def stats_folder(self) -> Path:
@@ -105,7 +75,7 @@ class Suite:
         """The folder containing the class files"""
         return self.workdir / "cases"
 
-    def sourcefiles(self) -> Iterable[Path]:
+    def sourcefiles(self, *, eff: Effect) -> Iterable[Path]:
         yield from self.sourcefiles_folder.glob("**/*.java")
 
     def sourcefile(self, cn: jvm.ClassName) -> Path:
@@ -170,34 +140,37 @@ class Suite:
     def case_file(self) -> Path:
         return self.stats_folder / "cases.txt"
 
-    @property
-    def stats_file(self) -> Path:
-        return self.stats_folder / "stats.json"
+    def cases(self, *, eff: Effect) -> Iterable[Case]:
+        for case in self.case_file.read_text().splitlines():
+            yield Case.decode(case)
+
+    def experiments(self, *, eff: Effect) -> Iterable[Experiment]:
+        entries = set()
+        for case in self.cases(eff=eff):
+            if not case.experiment.entry in entries:
+                entries.add(case.experiment.entry)
+                yield Experiment(case.experiment.entry, None)
+
+            yield case.experiment
 
     @property
-    def version(self):
-        with open(self.workdir / "CITATION.cff", encoding="utf-8") as f:
-            import yaml
+    def benchmark_file(self) -> Path:
+        return self.stats_folder / "benchmark.sexp"
 
-            return yaml.safe_load(f)["version"]
+    def benchmark(self, *, eff: Effect) -> Benchmark:
+        code = self.benchmark_file.read_text()
+        benchmark_cc = sexpr.from_string(code)[0]
+        return Benchmark.from_sexpr(benchmark_cc)
 
-    def case_methods(self) -> dict[jvm.Absolute[jvm.MethodID], set[str]]:
-        methods = defaultdict(set)
-
-        for case in self.cases:
-            methods[case.methodid].add(case.result)
-
-        return methods
-
-    def case_opcodes(self, eff: Effect) -> Iterator[jvm.Opcode]:
-        for m in self.case_methods():
-            yield from self.method_opcodes(m, eff=eff)
+    @property
+    def version(self) -> str:
+        return __version__
 
     def checkhealth(self, docker, *, eff: Effect, failfast=False):
         """Checks the health of the repository through a sequence of tests"""
 
-        def check(msg):
-            return _check(msg, failfast=failfast, eff=eff)
+        checker = HealthChecker(eff=eff, failfast=failfast)
+        check = checker.check
 
         if docker is not None:
             with check("docker"):
@@ -205,56 +178,115 @@ class Suite:
 
         with check("The timer"):
             x = runit.timer.sieve(1000)
-            assert x == 7919, "should find correct prime."
+            if x != 7919:
+                checker.raise_issue("should find correct prime.")
 
         with check(f"The source folder [{self.sourcefiles_folder}]"):
-            assert self.sourcefiles_folder.exists(), "should exists"
-            assert self.sourcefiles_folder.is_dir(), "should be a folder"
-            files = list(self.sourcefiles())
-            assert len(files) > 0, "should contain source files"
+            if not self.sourcefiles_folder.exists():
+                checker.raise_issue("should exists")
+            if not self.sourcefiles_folder.is_dir():
+                checker.raise_issue("should be a folder")
+            files = list(self.sourcefiles(eff=eff))
+            if not len(files) > 0:
+                checker.raise_issue("should contain source files")
             eff.info(f"Found {len(files)} files")
 
         with check(f"The classfiles folder [{self.classfiles_folder}]"):
-            assert self.classfiles_folder.exists(), "should exists"
-            assert self.classfiles_folder.is_dir(), "should be a folder"
+            if not self.classfiles_folder.exists():
+                checker.raise_issue("should exists")
+            if not self.classfiles_folder.is_dir():
+                checker.raise_issue("should be a folder")
             files = list(self.classfiles(eff=eff))
-            assert len(files) > 0, "should contain class files"
+            if not len(files) > 0:
+                checker.raise_issue("should contain class files")
             eff.info(f"Found {len(files)} files")
 
         with check(f"The decompiled folder [{self.decompiled_folder}]"):
-            assert self.decompiled_folder.exists(), "should exists"
-            assert self.decompiled_folder.is_dir(), "should be a folder"
+            if not self.decompiled_folder.exists():
+                checker.raise_issue("should exists")
+            if not self.decompiled_folder.is_dir():
+                checker.raise_issue("should be a folder")
             files = list(self.decompiledfiles())
-            assert len(files) > 0, "should contain decompiled class files"
+            if not len(files) > 0:
+                checker.raise_issue("should contain decompiled class files")
             eff.info(f"Found {len(files)} files")
 
             for cn in self.classes(eff=eff):
                 x = self.findclass(cn, eff=eff)
                 eff.info(f"Checking if {cn.dotted()} is decompiled.")
-                assert x["name"] == cn.slashed(), f"could not decompile {cn.dotted()}"
+                if x["name"] != cn.slashed():
+                    checker.raise_issue(f"could not decompile {cn.dotted()}")
+
+        cases = []
+        entries = set()
 
         with check(f"The case file [{self.case_file}]"):
-            assert self.case_file.exists(), "should exist"
-            assert len(self.cases) > 0, "cases should be parsable and at least one"
-            eff.info(f"Found {len(self.cases)} cases")
+            if not self.case_file.exists():
+                checker.raise_issue("should exist")
+
+            cases = list(self.cases(eff=eff))
+            if not len(cases) > 0:
+                checker.raise_issue("cases should be parsable and at least one")
+            eff.info(f"Found {len(cases)} cases")
+
+            for case in cases:
+                entries.add(case.methodid)
+
+            eff.info(f"Found {len(entries)} entries")
+
+        with check(f"The benchmark file [{self.benchmark_file}]"):
+            if not self.benchmark_file.exists():
+                checker.raise_issue("should exist")
+
+            benchmark = self.benchmark(eff=eff)
+
+            for case in cases:
+                with check(f"{case}"):
+                    try:
+                        control = benchmark.experiments[case.experiment]
+                    except KeyError:
+                        checker.raise_issue(
+                            f"Could not find {case.experiment} in experiments"
+                        )
+
+                    if case.results != control.results:
+                        checker.raise_issue(
+                            f"Expected {case.results} = {control.results} "
+                        )
+
+                    try:
+                        all_experiment = Experiment(case.methodid, None)
+                        all_control = benchmark.experiments[all_experiment]
+                    except KeyError:
+                        checker.raise_issue(
+                            f"Could not find {all_experiment} in experiments"
+                        )
+
+                    if not case.result in all_control.results:
+                        checker.raise_issue(
+                            f"Expected {case.result} in {all_control.results} experiments"
+                        )
 
         with check("Opcodes"):
-            for method in self.case_methods():
-                eff.info(f"Checking if the opcodes from {method} are handeled")
+            for entry in entries:
+                eff.info(f"Checking if the opcodes from {entry} are handeled")
                 try:
-                    for opr in self.method_opcodes(method, eff=eff):
+                    for opr in self.method_opcodes(entry, eff=eff):
                         str(opr)
                         str(opr.real())
                 except NotImplementedError as e:
-                    raise AssertionError(
-                        f"All operations should be supported: {e}"
-                    ) from e
+                    raise HealthIssue(f"All operations should be supported: {e}") from e
+
+        checker.done()
 
     def build(self, *, docker: DockerRunner, eff: Effect):
         with eff.context("Compiling"):
             docker.run(
                 ["javac", "-g", "-d", "target/classes"]
-                + [a.relative_to(self.workdir).as_posix() for a in self.sourcefiles()],
+                + [
+                    a.relative_to(self.workdir).as_posix()
+                    for a in self.sourcefiles(eff=eff)
+                ],
                 timeout=600,
                 eff=eff,
             )
@@ -286,7 +318,7 @@ class Suite:
 
     def test(self, *, docker: DockerRunner, eff: Effect):
         with eff.context("Testing"):
-            for case in self.cases:
+            for case in self.cases(eff=eff):
                 with eff.context(f"{case}"):
                     folder = self.classfiles_folder
 
@@ -312,15 +344,67 @@ class Suite:
                     else:
                         eff.error(f"Incorrect (got {res.strip()}) expected {case}")
 
+    def run_benchmark(self, dynamic: interpret.Config, *, eff: Effect):
+        with eff.context("Benchmark"):
+            experiments = OrderedDict()
+
+            entries = {}
+            for case in self.cases(eff=eff):
+                eff.info(f"Running {case.experiment}")
+
+                reachable = set()
+                result = dynamic.run_experiment(case.experiment, eff=eff)
+                if result.response is None:
+                    eff.error(f"No response for {case.experiment}")
+                    continue
+                for step in result.response.steps:
+                    reachable.add(step.pc)
+
+                methods = {pc.method for pc in reachable}
+
+                coverage = {}
+                for m in methods:
+                    offsets = {pc.offset for pc in reachable if pc.method == m}
+                    coverage[m] = Coverage(
+                        reachable=offsets,
+                    )
+
+                control = Control(coverage=coverage, results={case.result})
+                entries.setdefault(case.experiment.entry, []).append(control)
+                experiments[case.experiment] = control
+
+                eff.info(f"Found {sexpr.pretty(sexpr.sexpr(control), indent=2)}")
+
+        for entry, controls in entries.items():
+            experiment = Experiment(entry, None)
+
+            coverage = {}
+            results = set()
+            for control in controls:
+                results |= control.results
+
+                for m, r in control.coverage.items():
+                    if m not in coverage:
+                        coverage[m] = copy.deepcopy(r)
+                    else:
+                        coverage[m].reachable.update(r.reachable)
+
+            control = Control(coverage=coverage, results=results)
+            experiments[experiment] = control
+
+        self.benchmark_file.write_text(
+            sexpr.pretty(sexpr.sexpr(Benchmark(experiments)), indent=2)
+        )
+
     def document(self, *, eff: Effect):
         with eff.context("Documenting"):
             opcode_counts = Counter()
             opcode_urls = {}
             class_opcodes = {}
-            for case in self.cases:
-                class_opcodes[str(case.methodid.classname).split(".")[-1]] = set()
+            for experiment in self.experiments(eff=eff):
+                class_opcodes[str(experiment.entry.classname).split(".")[-1]] = set()
                 list_ops = []
-                for opcode in self.method_opcodes(case.methodid, eff=eff):
+                for opcode in self.method_opcodes(experiment.entry, eff=eff):
                     index = opcode.mnemonic()  # opcode.real().split()[0]
                     list_ops.append(index)
 
@@ -333,7 +417,7 @@ class Suite:
                     opcode_counts[index] += 1
 
                 for o in list_ops:
-                    class_opcodes[str(case.methodid.classname).split(".")[-1]].add(o)
+                    class_opcodes[str(experiment.entry.classname).split(".")[-1]].add(o)
 
             with (
                 eff.context("Writing OPCODES.md"),
@@ -392,25 +476,7 @@ def setup() -> tuple[Suite, Effect]:
     """Get a suite in the current working directory"""
 
     eff = Effect(None)
-    return (Suite.from_workdir(Path.cwd(), eff=eff), eff)
-
-
-@contextmanager
-def _check(reason, *, eff: Effect, failfast=False):
-    """Used in the checkhealth command"""
-    with eff.context(reason):
-        try:
-            yield
-        except AssertionError as e:
-            msg = str(e)
-            if msg:
-                eff.error(f"FAILED: {e}")
-            else:
-                eff.error("FAILED")
-            if failfast:
-                raise AssertionError(f"{reason} {e.args!s}") from e
-        else:
-            eff.success("ok")
+    return (Suite.from_workdir(Path.cwd()), eff)
 
 
 def getmethodid(
@@ -431,14 +497,14 @@ def getmethodid(
     return parse_methodid(mid)
 
 
-def getcase(
+def getexperiment(
     name: str,
     version: str,
     group: str,
     tags: list[str],
     for_science: bool,
-) -> tuple[jvm.AbsMethodID, Input, int]:
-    """Get the case from the program arguments."""
+) -> tuple[jvm.AbsMethodID, Input | None, int]:
+    """Get the experiment from the program arguments."""
 
     if len(sys.argv) == 2 and sys.argv[1] == "info":
         printinfo(name, version, group, tags, for_science)
@@ -454,6 +520,16 @@ def getcase(
     return mid, i, max_iter
 
 
+def getcase(
+    name: str,
+    version: str,
+    group: str,
+    tags: list[str],
+    for_science: bool,
+) -> tuple[jvm.AbsMethodID, Input | None, int]:
+    return getexperiment(name, version, group, tags, for_science)
+
+
 def printinfo(
     name: str,
     version: str,
@@ -461,14 +537,15 @@ def printinfo(
     tags: list[str],
     for_science: bool,
 ) -> NoReturn:
-    print(name)
-    print(version)
-    print(group)
-    print(",".join(tags))
+    sys.stdout.write(f"{name}\n")
+    sys.stdout.write(f"{version}\n")
+    sys.stdout.write(f"{group}\n")
+    sys.stdout.write(f"{','.join(tags)}\n")
+
     if for_science:
         import platform
 
-        print(platform.platform())
+        sys.stdout.write(f"{platform.platform()}\n")
 
     sys.exit(0)
 
@@ -477,24 +554,26 @@ def parse_methodid(mid) -> jvm.AbsMethodID:
     return jvm.AbsMethodID.decode(mid)
 
 
-def parse_input(i) -> Input:
+def parse_input(i) -> Input | None:
+    if i == "ALL":
+        return None
     return Input.decode(i)
 
 
 def emit_init(state: jvm.state.State) -> sexpr.SExpr:
+    import sys
+
     import jpamb.interpret
 
     expr = sexpr.sexpr(state)
     out = sexpr.pretty(sexpr.sexpr(jpamb.interpret.Init(expr)), indent=2)
-    print(sexpr.pretty(expr, indent=2), file=sys.stderr)
-    print(out)
+    sys.stderr.write(sexpr.pretty(expr, indent=2) + "\n")
+    sys.stdout.write(out + "\n")
     return expr
 
 
 def emit_step(
-    before: sexpr.SExpr,
-    pc: jvm.state.PC,
-    after: jvm.state.State,
+    before: sexpr.SExpr, pc: jvm.state.PC, after: jvm.state.State | str, depth=2
 ) -> sexpr.SExpr:
     import jpamb.interpret
 
@@ -502,7 +581,8 @@ def emit_step(
     assert isinstance(pc, jvm.state.PC), f"Expected PC but got {pc!r}"
 
     expr = sexpr.sexpr(after)
-    out = sexpr.pretty(sexpr.sexpr(jpamb.interpret.Step(before, pc, expr)), indent=2)
-    print(sexpr.pretty(expr, indent=2), file=sys.stderr)
-    print(out)
+    diff = sexpr.diff(before, expr, depth=depth)
+    out = sexpr.pretty(sexpr.sexpr(jpamb.interpret.Step(pc, tuple(diff))), indent=2)
+    sys.stderr.write(sexpr.pretty(expr, indent=2) + "\n")
+    sys.stdout.write(out + "\n")
     return expr

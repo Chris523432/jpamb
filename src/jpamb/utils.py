@@ -23,7 +23,9 @@ def dump_table(groups, *, align, file):
     sizes = [max(map(len, col)) for col in zip(*rows)]
 
     for row in rows:
-        print("  ".join(f"{r:{a}{s}}" for r, a, s in zip(row, align, sizes)), file=file)
+        file.write(
+            "  ".join(f"{r:{a}{s}}" for r, a, s in zip(row, align, sizes)) + "\n"
+        )
 
 
 @dataclass
@@ -48,14 +50,14 @@ class Effect:
     def context(self, title):
         old = self.prefix
         if self.report:
-            print(f"{self.prefix[:-1]}┌ {title}", file=self.report)
+            self.report.write(f"{self.prefix[:-1]}┌ {title}\n")
         self.prefix = f"{self.prefix[:-1]}│ "
         try:
             yield
         finally:
             self.prefix = old
             if self.report:
-                print(f"{self.prefix[:-1]}└ {title}", file=self.report)
+                self.report.write(f"{self.prefix[:-1]}└ {title}\n")
 
     def output(self, msgs):
         if self.report is None:
@@ -65,7 +67,7 @@ class Effect:
             msgs = str(msgs)
 
         for msg in msgs.splitlines():
-            print(f"{self.prefix}{msg}", file=self.report)
+            self.report.write(f"{self.prefix}{msg}\n")
 
     def log(self, level, msg):
         if level >= self.level:
@@ -177,3 +179,42 @@ class DockerRunner:
         ]
         full_cmd += args[0]
         return eff.run(full_cmd, *args[1:], **kwargs)
+
+
+class HealthIssue(Exception):
+    pass
+
+
+@dataclass
+class HealthChecker:
+    eff: Effect
+    failfast: bool = False
+    issues: list[HealthIssue] = field(default_factory=list)
+
+    def raise_issue(self, reason: str):
+        raise HealthIssue(reason)
+
+    def done(self):
+        if self.issues:
+            raise HealthIssue(
+                f"Found {len(self.issues)} issues:{''.join(f'\n{e}' for e in self.issues)}"
+            )
+
+    @contextmanager
+    def check(self, reason: str):
+        """Used in the checkhealth command"""
+        with self.eff.context(reason):
+            try:
+                yield
+            except (AssertionError, HealthIssue) as e:
+                issue = HealthIssue(str(e)) if isinstance(e, AssertionError) else e
+                self.issues.append(issue)
+                msg = str(e)
+                if msg:
+                    self.eff.error(f"FAILED: {e}")
+                else:
+                    self.eff.error("FAILED")
+                if self.failfast:
+                    raise HealthIssue(f"{reason} {e.args!s}") from e
+            else:
+                self.eff.success("ok")

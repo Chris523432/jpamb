@@ -1,5 +1,13 @@
 # The Change Log
 
+## Version 0.7.0
+
+- Add Benchmark files and structure, to validate interpreters
+
+## Version 0.6.1
+
+- Fix regression in `checkhealth`
+
 ## Version 0.6.0
 
 - Fix bug in `inspect`
