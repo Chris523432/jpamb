@@ -1,3 +1,4 @@
+import itertools
 import random
 import sys
 
@@ -413,6 +414,58 @@ def fuzz_input(
 
     return jpamb.case.Input(input)
 
+MAX_DEPTH = 3
+SMALL_SCOPE_BUDGET = 200
+
+def gen_int(depth: int):
+    yield 0
+    for i in range(depth):
+        yield (i + 1)
+        yield -(i + 1)
+
+def gen_char(depth: int):
+    for i in range(depth):
+        yield chr(ord("a") + i)
+
+def gen_sequences(elements: list, depth: int):
+    """All sequences of length 0..depth over elements"""
+    for length in range(depth + 1):
+        yield from itertools.product(elements, repeat=length)
+
+def gen_value(p: jvm.Type, depth: int) -> list[jpamb.case.Value]:
+    match p:
+        case jvm.Int():
+            return [jpamb.case.Int(i) for i in gen_int(depth)]
+        case jvm.Boolean():
+            return [jpamb.case.Boolean(False), jpamb.case.Boolean(True)]
+        case jvm.Array(contains=jvm.Int()):
+            ints = list(gen_int(depth))
+            return [jpamb.case.Array(jvm.Int(), s) for s in gen_sequences(ints, depth)]
+        case jvm.Array(contains=jvm.Char()):
+            chars = list(gen_char(depth))
+            return [jpamb.case.Array(jvm.Char(), s) for s in gen_sequences(chars, depth)]
+        case jvm.Object(name=jvm.ClassName("java.lang.String")):
+            chars = list(gen_char(depth))
+            return [jpamb.case.String("".join(s)) for s in gen_sequences(chars, depth)]
+        case a:
+            raise NotImplementedError(
+                f"Don't know how to create small values for {a}"
+            )
+
+def small_scope_inputs(methodid: jvm.AbsMethodID, max_depth: int, budget: int):
+    """Iterative deepening over all small inputs, skipping ones already tried"""
+    seen = set()
+    for depth in range(1, max_depth + 1):
+        values_per_param = [gen_value(p, depth) for p in methodid.extension.params]
+        for values in itertools.product(*values_per_param):
+            input = jpamb.case.Input(tuple(values))
+            if input in seen:
+                continue
+            if len(seen) >= budget:
+                return
+            seen.add(input)
+            yield input
+
 def analyse():
     from dynamic_helper import (
         select_trace,
@@ -441,13 +494,16 @@ def analyse():
     rand = random.Random(0)
 
     number_of_params = len(methodid.extension.params)
-    # Without params there is only one trace, so running it more is pointless
-    number_of_runs = 1 if number_of_params == 0 else NUMBER_OF_RUNS
     ints = syntactically_all_ints_in_class(suite, eff, methodid.classname)
     strings = syntactically_all_strings_in_class(suite, eff, methodid.classname)
+
+    inputs = list(small_scope_inputs(methodid, MAX_DEPTH, SMALL_SCOPE_BUDGET))
+    if number_of_params > 0:
+        for i in range(NUMBER_OF_RUNS):
+            inputs.append(fuzz_input(rand, methodid, ints, strings))
+
     traces = []
-    for i in range(number_of_runs):
-        input = fuzz_input(rand, methodid, ints, strings)
+    for input in inputs:
         trace = select_trace(bc, methodid, input, MAX_STEPS)
         traces.append(trace)
 
