@@ -479,7 +479,7 @@ def analyse():
         "dynamic",
         "1.0",
         "MeatballMice",
-        ["dynamic", "python"],
+        ["dynamic", "python", "random", "dictionary", "syntactic", "smallcheck"],
         for_science=True,
     )
 
