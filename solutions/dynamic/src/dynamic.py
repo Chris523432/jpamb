@@ -361,18 +361,40 @@ def interpret():
             break
 
 
+NUMBER_OF_RUNS = 100
+MAX_ARRAY_LENGTH = 10
+MAX_STRING_LENGTH = 10
+
+def random_int(rand: random.Random) -> int:
+    return rand.randint(-(1 << 31), (1 << 31) - 1)
+
+def random_char(rand: random.Random) -> str:
+    return chr(rand.randint(32, 126))
+
 def fuzz_input(rand: random.Random, methodid: jvm.AbsMethodID) -> jpamb.case.Input:
     input = []
     # 1. come up with possible inputs
     for p in methodid.extension.params:
         match p:
             case jvm.Int():
-                input.append(jpamb.case.Int(rand.randint(-(1 << 31), 1 << 31)))
+                input.append(jpamb.case.Int(random_int(rand)))
             case jvm.Boolean():
                 input.append(jpamb.case.Boolean(1 == rand.randint(0, 1)))
+            case jvm.Array(contains=jvm.Int()):
+                length = rand.randint(0, MAX_ARRAY_LENGTH)
+                values = tuple(random_int(rand) for _ in range(length))
+                input.append(jpamb.case.Array(jvm.Int(), values))
+            case jvm.Array(contains=jvm.Char()):
+                length = rand.randint(0, MAX_ARRAY_LENGTH)
+                values = tuple(random_char(rand) for _ in range(length))
+                input.append(jpamb.case.Array(jvm.Char(), values))
+            case jvm.Object(name=jvm.ClassName("java.lang.String")):
+                length = rand.randint(0, MAX_STRING_LENGTH)
+                value = "".join(random_char(rand) for _ in range(length))
+                input.append(jpamb.case.String(value))
             case a:
                 raise NotImplementedError(
-                    "Don't know how to create random values for {input}"
+                    f"Don't know how to create random values for {a}"
                 )
 
     return jpamb.case.Input(input)
@@ -400,9 +422,10 @@ def analyse():
     rand = random.Random(0)
 
     number_of_params = len(methodid.extension.params)
+    # Without params there is only one trace, so running it more is pointless
+    number_of_runs = 1 if number_of_params == 0 else NUMBER_OF_RUNS
     traces = []
-    # Try 10 random inputs
-    for i in range(10):
+    for i in range(number_of_runs):
         input = fuzz_input(rand, methodid)
         trace = select_trace(bc, methodid, input, MAX_STEPS)
         traces.append(trace)
