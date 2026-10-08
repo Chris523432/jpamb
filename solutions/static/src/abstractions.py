@@ -232,21 +232,32 @@ class SignSet(Abstraction, Lattice):
                 raise NotImplementedError(f"TODO: {opr}")
 
     def compare(self, other: "SignSet", opr: jvm.CmpOpr) -> Iterable[bool]:
-        match opr:
-            case jvm.CmpOpr.Le:
-                cases = set()
-                for x in self.signs:
-                    for y in other.signs:
-                        if x == 0 or y == 0:
-                            cases.add(x <= y)
-                            continue
-                        if x <= y:
-                            cases.add(True)
-                        if x >= y:
-                            cases.add(False)
-                return cases
-            case _:
-                raise NotImplementedError(f"TODO: {opr}")
+        cases = set()
+        for x in self.signs:
+            for y in other.signs:
+                # The possible signs of a - b, when a has sign x and b has sign y
+                if x != y:
+                    orderings = {x - y}
+                elif x == 0:
+                    orderings = {0}
+                else:
+                    orderings = {-1, 0, 1}
+
+                for d in orderings:
+                    match opr:
+                        case jvm.CmpOpr.Eq:
+                            cases.add(d == 0)
+                        case jvm.CmpOpr.Ne:
+                            cases.add(d != 0)
+                        case jvm.CmpOpr.Lt:
+                            cases.add(d < 0)
+                        case jvm.CmpOpr.Le:
+                            cases.add(d <= 0)
+                        case jvm.CmpOpr.Gt:
+                            cases.add(d > 0)
+                        case jvm.CmpOpr.Ge:
+                            cases.add(d >= 0)
+        return cases
 
 
 from collections.abc import Iterable
