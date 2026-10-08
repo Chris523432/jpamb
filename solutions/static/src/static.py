@@ -94,6 +94,22 @@ def manystep(
             va = state.load(i)
             yield (pc + 1, state.push(va))
 
+        case jvm.Store(index=i):
+            [va], after = state.pop(1)
+            yield (pc + 1, after.store(i, va))
+
+        case jvm.Incr(index=i, amount=amount):
+            amount = SignSet.abstract([StackInt(amount)])
+            res, _ = SignSet.arithmetic(state.load(i), amount, jvm.BinaryOpr.Add)
+            yield (pc + 1, state.store(i, res))
+
+        case jvm.Cast():
+            # Truncating can change the sign, only 0 is guaranteed to stay 0
+            [va], after = state.pop(1)
+            if va.signs - {0}:
+                va = SignSet.top()
+            yield (pc + 1, after.push(va))
+
         case jvm.Goto(target=t):
             yield (pc % t, state)
 
