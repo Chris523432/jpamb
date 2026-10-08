@@ -113,6 +113,22 @@ def manystep(
                 va = SignSet.top()
             yield (pc + 1, after.push(va))
 
+        case jvm.ArrayLength():
+            [ref], after = state.pop(1)
+            if 0 in ref.signs:
+                yield "null pointer"
+            if ref.signs - {0}:
+                yield (pc + 1, after.push(SignSet.from_sign("0+")))
+
+        case jvm.ArrayStore():
+            [ref, _index, _value], after = state.pop(3)
+            if 0 in ref.signs:
+                yield "null pointer"
+            if ref.signs - {0}:
+                # It might be out of bounds, no knowledge of length
+                yield "out of bounds"
+                yield (pc + 1, after)
+
         case jvm.Goto(target=t):
             if t <= pc.offset:
                 # Jumping backwards is a loop, which might never terminate
