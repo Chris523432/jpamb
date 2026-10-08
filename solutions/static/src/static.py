@@ -78,6 +78,9 @@ def manystep(
                     case err:
                         yield err
 
+        case jvm.Push(value=v):
+            yield (pc + 1, state.push(SignSet.abstract([StackInt(v)])))
+
         case jvm.Load(index=i):
             va = state.load(i)
             yield (pc + 1, state.push(va))
@@ -87,11 +90,9 @@ def manystep(
 
         case jvm.Binary(operant=op):
             [v1, v2], after = state.pop(2)
-            for res in SignSet.arithmetic(v1, v2, op):
-                if isinstance(res, str):
-                    yield res
-                else:
-                    yield (pc + 1, after.push(res))
+            res, errors = SignSet.arithmetic(v1, v2, op)
+            yield from errors
+            yield (pc + 1, after.push(res))
 
         case jvm.Return(type=None):
             yield "ok"

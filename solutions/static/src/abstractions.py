@@ -213,6 +213,21 @@ class SignSet(Abstraction, Lattice):
                     output.update(other.signs)
 
                 return (SignSet(output), set())
+            case jvm.BinaryOpr.Sub:
+                neg = SignSet(frozenset(-y for y in other.signs))
+                return self.arithmetic(neg, jvm.BinaryOpr.Add)
+            case jvm.BinaryOpr.Mul:
+                output = {x * y for x in self.signs for y in other.signs}
+                return (SignSet(frozenset(output)), set())
+            case jvm.BinaryOpr.Div | jvm.BinaryOpr.Rem:
+                errors = {"divide by zero"} if 0 in other.signs else set()
+                output = set()
+                for x in self.signs:
+                    for y in other.signs - {0}:
+                        # Java rounds towards zero, so the result can also be 0
+                        # Div gets the sign x * y, Rem gets the sign of x
+                        output |= {0, x * y if opr == jvm.BinaryOpr.Div else x}
+                return (SignSet(frozenset(output)), errors)
             case _:
                 raise NotImplementedError(f"TODO: {opr}")
 
