@@ -78,6 +78,15 @@ def manystep(
                     case err:
                         yield err
 
+        case jvm.If(condition=op, target=target):
+            [v1, v2], after = state.pop(2)
+
+            for res in SignSet.compare(v1, v2, op):
+                if res:
+                    yield (pc % target, after)
+                else:
+                    yield (pc + 1, after)
+
         case jvm.Push(value=v):
             yield (pc + 1, state.push(SignSet.abstract([StackInt(v)])))
 
