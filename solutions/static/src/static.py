@@ -111,6 +111,9 @@ def manystep(
             yield (pc + 1, after.push(va))
 
         case jvm.Goto(target=t):
+            if t <= pc.offset:
+                # Jumping backwards is a loop, which might never terminate
+                yield "*"
             yield (pc % t, state)
 
         case jvm.Binary(operant=op):
