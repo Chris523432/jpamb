@@ -202,7 +202,7 @@ def analyse():
     methodid = jpamb.getmethodid(
         "static",
         "1.0",
-        "The Rice Theorem Cookers",
+        "MeatballMice",
         ["static", "python"],
         for_science=True,
     )
