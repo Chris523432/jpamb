@@ -87,6 +87,9 @@ def manystep(
                 else:
                     yield (pc + 1, after)
 
+        case jvm.Push(value=None):
+            yield (pc + 1, state.push(SignSet.from_sign("0")))
+
         case jvm.Push(value=v):
             yield (pc + 1, state.push(SignSet.abstract([StackInt(v)])))
 
