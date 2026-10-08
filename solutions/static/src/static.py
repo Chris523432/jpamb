@@ -113,12 +113,29 @@ def manystep(
                 va = SignSet.top()
             yield (pc + 1, after.push(va))
 
+        case jvm.Dup():
+            [va], _ = state.pop(1)
+            yield (pc + 1, state.push(va))
+
+        case jvm.NewArray():
+            [_size], after = state.pop(1)
+            yield (pc + 1, after.push(SignSet.from_sign("+")))
+
         case jvm.ArrayLength():
             [ref], after = state.pop(1)
             if 0 in ref.signs:
                 yield "null pointer"
             if ref.signs - {0}:
                 yield (pc + 1, after.push(SignSet.from_sign("0+")))
+
+        case jvm.ArrayLoad():
+            [ref, _index], after = state.pop(2)
+            if 0 in ref.signs:
+                yield "null pointer"
+            if ref.signs - {0}:
+                yield "out of bounds"
+                # Can be anything
+                yield (pc + 1, after.push(SignSet.top()))
 
         case jvm.ArrayStore():
             [ref, _index, _value], after = state.pop(3)
@@ -233,12 +250,20 @@ def interpret():
     ai = AbstractInterpreter.initial(bc, methodid, input)
 
     x = jpamb.emit_init(ai.states)
+    seen = set()
 
     while steps > 0 and ai.worklist:
         pc, final = ai.step()
-        for f in final:
+        # Only report each final result once, to save steps
+        for f in final - seen:
             jpamb.emit_step(x, pc, f, depth=1)
             steps -= 1
+        seen |= final
+
+        # Only report each program point once, to save steps
+        if pc in seen:
+            continue
+        seen.add(pc)
 
         x = jpamb.emit_step(x, pc, ai.states, depth=1)
         steps -= 1
