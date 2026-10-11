@@ -15,10 +15,13 @@ from jvm.state import PC, StackInt
 class State(sexpr.AsSExpr):
     locals: tuple[SignSet, ...]
     stack: tuple[SignSet, ...]
+    origins: tuple = ()
 
     def __post_init__(self):
         assert isinstance(self.locals, tuple)
         assert isinstance(self.stack, tuple)
+        if len(self.origins) != len(self.stack):
+            object.__setattr__(self, "origins", (None,) * len(self.stack))
 
     def __str__(self):
         return f"{', '.join(map(str, self.locals))}/{':'.join(map(str, self.stack))}"
@@ -28,25 +31,54 @@ class State(sexpr.AsSExpr):
         assert len(self.stack) == len(other.stack), "Stacks should be equal lenght"
         assert len(self.locals) == len(other.locals), "Locals should be equal lenght"
 
+        origins = []
+        for o1, o2 in zip(self.origins, other.origins):
+            if o1 == o2:
+                origins.append(o1)
+            else:
+                origins.append(None)
         return State(
             tuple(s1 | s2 for s1, s2 in zip(self.locals, other.locals)),
             tuple(s1 | s2 for s1, s2 in zip(self.stack, other.stack)),
+            tuple(origins),
         )
 
-    def push(self, value: SignSet):
+    def push(self, value: SignSet, origin=None):
         assert isinstance(value, SignSet), f"Expected sign set but got {value}"
-        return State(self.locals, self.stack + (value,))
+        return State(self.locals, self.stack + (value,), self.origins + (origin,))
 
     def pop(self, number=1):
-        return self.stack[-number:], State(self.locals, self.stack[:-number])
+        return self.stack[-number:], State(
+            self.locals, self.stack[:-number], self.origins[:-number]
+        )
+
+    def origins_of(self, number):
+        return self.origins[-number:]
 
     def load(self, index):
         return self.locals[index]
 
     def store(self, index, value):
+        origins = []
+        for o in self.origins:
+            if o == index:
+                origins.append(None)
+            else:
+                origins.append(o)
         return State(
             tuple(self.locals[:index]) + (value,) + tuple(self.locals[index + 1 :]),
             self.stack,
+            tuple(origins),
+        )
+        
+    def refine(self, origin, value: SignSet):
+        if origin is None:
+            return self
+        new_local = self.locals[origin] & value
+        return State(
+            tuple(self.locals[:origin]) + (new_local,) + tuple(self.locals[origin + 1 :]),
+            self.stack,
+            self.origins,
         )
 
 
@@ -67,25 +99,45 @@ def manystep(
             yield (pc + 1, state.push(va))
 
         case jvm.Ifz(condition=op, target=target):
+            [o1] = state.origins_of(1)
             [val], after = state.pop(1)
+            zero = SignSet.abstract([StackInt(0)])
 
-            for res in SignSet.compare(val, SignSet.abstract([StackInt(0)]), op):
-                match res:
-                    case True:
-                        yield (pc % target, after)
-                    case False:
-                        yield (pc + 1, after)
-                    case err:
-                        yield err
+            for outcome in [True, False]:
+                kept = set()
+                for x in val.signs:
+                    if outcome in SignSet.compare(SignSet(frozenset([x])), zero, op):
+                        kept.add(x)
+                if len(kept) == 0:
+                    continue 
+                refined = after.refine(o1, SignSet(frozenset(kept)))
+                if outcome:
+                    yield (pc % target, refined)
+                else:
+                    yield (pc + 1, refined)
 
         case jvm.If(condition=op, target=target):
+            [o1, o2] = state.origins_of(2)
             [v1, v2], after = state.pop(2)
 
-            for res in SignSet.compare(v1, v2, op):
-                if res:
-                    yield (pc % target, after)
+            for outcome in [True, False]:
+                kept1 = set()
+                kept2 = set()
+                for x in v1.signs:
+                    for y in v2.signs:
+                        one_x = SignSet(frozenset([x]))
+                        one_y = SignSet(frozenset([y]))
+                        if outcome in SignSet.compare(one_x, one_y, op):
+                            kept1.add(x)
+                            kept2.add(y)
+                if len(kept1) == 0:
+                    continue  
+                refined = after.refine(o1, SignSet(frozenset(kept1)))
+                refined = refined.refine(o2, SignSet(frozenset(kept2)))
+                if outcome:
+                    yield (pc % target, refined)
                 else:
-                    yield (pc + 1, after)
+                    yield (pc + 1, refined)
 
         case jvm.Push(value=None):
             yield (pc + 1, state.push(SignSet.from_sign("0")))
@@ -99,7 +151,7 @@ def manystep(
 
         case jvm.Load(index=i):
             va = state.load(i)
-            yield (pc + 1, state.push(va))
+            yield (pc + 1, state.push(va, origin=i))
 
         case jvm.Store(index=i):
             [va], after = state.pop(1)
@@ -118,8 +170,9 @@ def manystep(
             yield (pc + 1, after.push(va))
 
         case jvm.Dup():
+            [o1] = state.origins_of(1)
             [va], _ = state.pop(1)
-            yield (pc + 1, state.push(va))
+            yield (pc + 1, state.push(va, origin=o1))
 
         case jvm.NewArray():
             [_size], after = state.pop(1)
@@ -184,7 +237,8 @@ def manystep(
             [v1, v2], after = state.pop(2)
             res, errors = SignSet.arithmetic(v1, v2, op)
             yield from errors
-            yield (pc + 1, after.push(res))
+            if res != SignSet.bot():
+                yield (pc + 1, after.push(res))
 
         case jvm.Return(type=None):
             yield "ok"
@@ -268,7 +322,7 @@ def interpret():
     methodid, input, steps = jpamb.getcase(
         "static",
         "1.0",
-        "The Rice Theorem Cookers",
+        "MeatballMice",
         ["static", "python"],
         for_science=True,
     )
