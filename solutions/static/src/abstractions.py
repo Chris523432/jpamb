@@ -259,6 +259,22 @@ class SignSet(Abstraction, Lattice):
                             cases.add(d >= 0)
         return cases
 
+@dataclass(frozen=True)
+class Interval:
+    lo: int | None
+    hi: int | None
+    # TODO: pick ONE normalised empty representation (e.g. lo=1, hi=0),
+    #       because Lattice.bot() calls cls.abstract([]).
+
+    @classmethod
+    def abstract(cls, xs): ...      # TODO: min/max of xs; empty -> bot
+    @classmethod
+    def top(cls): ...               # TODO
+    def __or__(slef, o ): ...       # TODO: join = hull (smallest interval containing both)
+    def _and__(self, o): ...        # TODO: meet = intersection (max of lows, min of highs)
+    def __contains__(self, x): ...  # TODO
+    # Later (STage 2): add(sub with +/-infinity handled carefully)
+
 
 from collections.abc import Iterable
 from dataclasses import dataclass

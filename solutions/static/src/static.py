@@ -380,3 +380,14 @@ def analyse():
             print(f"{f};no")
         else:
             print(f"{f};maybe")
+
+@dataclass(frozen=True)
+class State:
+    locals: tuple[SignSet, ...]
+    stack: tuple[SignSet, ...]
+    origins: tuple[int | None, ...]
+    lens_locals: tuple[Interval, ...]   # New (parallel to locals)
+    lens_stack: tuple[Interval, ...]    # New (parallel to stack)
+
+    def __or__(self, other):
+        # TODO: join each field
