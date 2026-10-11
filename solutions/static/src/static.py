@@ -90,6 +90,10 @@ def manystep(
         case jvm.Push(value=None):
             yield (pc + 1, state.push(SignSet.from_sign("0")))
 
+        case jvm.Push(value=str()):
+            # A string constant is a non-null reference
+            yield (pc + 1, state.push(SignSet.from_sign("+")))
+
         case jvm.Push(value=v):
             yield (pc + 1, state.push(SignSet.abstract([StackInt(v)])))
 
@@ -160,6 +164,16 @@ def manystep(
                 after = after.push(SignSet.top())
             yield (pc + 1, after)
 
+        case jvm.InvokeVirtual(method=m):
+            [ref, *_args], after = state.pop(len(m.extension.params) + 1)
+            if 0 in ref.signs:
+                yield "null pointer"
+            if ref.signs - {0}:
+                # We dont analyse library methods, so result is unknown
+                if m.extension.return_type is not None:
+                    after = after.push(SignSet.top())
+                yield (pc + 1, after)
+
         case jvm.Goto(target=t):
             if t <= pc.offset:
                 # Jumping backwards is a loop, which might never terminate
@@ -202,7 +216,7 @@ def initialstate(
                     locals[i] = SignSet.abstract([StackInt(int(value))])
                 case jpamb.case.Int(value=value):
                     locals[i] = SignSet.abstract([StackInt(int(value))])
-                case jpamb.case.Array():
+                case jpamb.case.Array() | jpamb.case.String():
                     locals[i] = SignSet.from_sign("+")
                 case _:
                     raise NotImplementedError(f"Unsupported value {x!r}")
