@@ -146,6 +146,20 @@ def manystep(
                 yield "out of bounds"
                 yield (pc + 1, after)
 
+        case jvm.InvokeStatic(method=m):
+            n = len(m.extension.params)
+            args, after = state.pop(n) if n > 0 else ((), state)
+
+            # Analyse the callee, starting with the arguments as locals
+            max_locals = bc.getmethod(m).max_locals
+            locals = tuple(args) + (SignSet.bot(),) * (max_locals - n)
+            yield (PC(m, 0), State(locals, ()))
+
+            # We don't connect the return back, so the result can be anything
+            if m.extension.return_type is not None:
+                after = after.push(SignSet.top())
+            yield (pc + 1, after)
+
         case jvm.Goto(target=t):
             if t <= pc.offset:
                 # Jumping backwards is a loop, which might never terminate
